@@ -68,20 +68,51 @@ contract EatMoney is
         SPIN
     }
 
-    // ===========
-    // Mappings
-    // ===========
     mapping(uint256 => ChainlinkRequestType) public chainlinkRequestTypes;
     mapping(uint256 => uint8) public reqIdToCategory;
+
 
     // ===========
     // Structures
     // ===========
+
+    struct EatPlate{
+        uint256 id;
+        uint256 efficiency;
+        uint256 fortune;
+        uint256 durability;
+        uint256 shiny;     // It tells you how much clean your EAT Plate is. You can only level up if your Shiny is 100%.
+        uint8 level;
+        Category category;
+        uint256 lastEat;
+        uint256 eats;
+        mapping(uint256=>Spin) idToSpin;
+    }
+
+    mapping(uint256=>EatPlate) public idToEatPlate;
+
+
+    struct EatPlateReturn{
+        uint256 id;
+        uint256 efficiency;
+        uint256 fortune;
+        uint256 durability;
+        uint256 shiny;
+        uint8 level;
+        Category category;
+        uint256 lastEat;
+        uint256 eats;
+    }
+
+
     struct MintRequest{
         uint8 category;
         uint256[] randomWords;
         bool isMinted;
     }
+
+    MintRequest[] public mintRequests;
+
 
     struct SpinRequest{
         uint256 plateId;
@@ -89,6 +120,9 @@ contract EatMoney is
         uint256 eatCoins;
         bool active;
     }
+
+    mapping(uint256=>SpinRequest) public reqIdToSpinRequest;
+
 
     struct EatRequest{
         uint256 plateId;
@@ -98,13 +132,51 @@ contract EatMoney is
         bool active;
     }
 
-    MintRequest[] public mintRequests;
-    
-    // ==================
-    // Mapping of Requests
-    // ===================
     mapping(uint256 => EatRequest) public reqIdToEatRequest;
-    mapping(uint256=>SpinRequest) public reqIdToSpinRequest;
+    
+    
+    struct Spin{
+        uint256 spinId;
+        uint32 result;   //    1/2/3/4
+        uint256 eatCoins;
+        bool isSpinned;
+    }
+
+
+    struct MarketItem{
+        uint256 id;
+        uint256 price;
+        address payable owner;
+        bool active;
+        uint256 tokenId;
+    }
+
+    mapping(uint256 => MarketItem) public idToMarketplaceItem;
+
+
+    struct Resturant{
+        uint256 id;
+        string info;
+        address payable owner;
+    }
+
+    mapping(uint256=>Resturant) public idToRestaurant;
+    mapping(address => uint256) public addressToRestaurantId;
+
+
+
+    // ==============
+    // EVENTS
+    // ==============
+
+    event EatFinished(
+        uint256 indexed plateId,
+        uint256 restaurantId,
+        uint256 amount,
+        uint256 eatCoinsMinted
+    );
+
+
 
     // ===========
     // Constructor
@@ -142,4 +214,84 @@ contract EatMoney is
     {
         return super.supportsInterface(interfaceId);
     }
+
+    function fulfillRandomWords(uint256 requestId, uint256[] memory randomWords)
+    internal
+    override
+    {
+        ChainlinkRequestType requestType = chainlinkRequestTypes[requestId];
+        if(requestType == ChainlinkRequestType.MINT){
+            mintRequests.push(
+                MintRequest(reqIdToCategory[requestId], randomWords, false)
+            );
+        }else if(requestType == ChainlinkRequestType.EAT){
+            _finishEat(requestId, randomWords);
+        }else if( requestType == ChainlinkRequestType.SPIN){
+            _finishSpin(requestId, randomWords);
+        }
+    }
+
+
+
+
+
+
+
+    // ---------------------------------
+    
+    function _finishEat(uint256 requestId, uint256[] memory randomWords)
+    internal
+    {
+        EatRequest memory eatRequest = reqIdToEatRequest[requestId];
+        require(eatRequest.active == false, "Aleady claimed eat coins for this request");
+        EatPlate storage plate = idToEatPlate[eatRequest.plateId];
+
+        uint256 shinyFactor = 100;
+        if(plate.shiny <= 60){
+            shinyFactor = 111;  // earning drop to 90% if shiny is less than 60
+        }else if(plate.shiny <= 20){
+            shinyFactor = 1000; // earning drop to 10% if shiny is less than 20
+        }
+
+        uint256 randomWord = randomWords[0];
+        uint256 randFactor = (randomWord % (FACTOR_3 - FACTOR_2 + 1)) + FACTOR_2;
+        uint256 eatCoins = ((plate.efficiency ** FACTOR_1) * eatRequest.amount * 10 ** 4 ) / (randFactor * shinyFactor);
+
+        idToEatPlate[eatRequest.plateId].lastEat = block.timestamp;
+        idToEatPlate[eatRequest.plateId].shiny -= 10;
+        reqIdToEatRequest[requestId].active = true;
+        idToEatPlate[eatRequest.plateId].idToSpin[plate.eats + 1] = Spin(
+            plate.eats + 1,
+            0,
+            eatCoins,
+            false
+        );
+        idToEatPlate[eatRequest.plateId].eats += 1;
+
+        mintEatCoins(eatRequest.owner, eatCoins);
+
+        emit EatFinished(
+            eatRequest.plateId,
+            eatRequest.restaurantId,
+            eatRequest.amount,
+            eatCoins
+        );
+
+    }
+
+
+
+
+
+
+
+
+    // ---------------------------------
+
+
+
+
+
+
+
 }
